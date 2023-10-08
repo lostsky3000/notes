@@ -1,0 +1,95 @@
+
+
+
+================= 相关文件说明
+假设:
+清单前缀名为 PackageManifest (YooAssetSettings文件中设置)
+包名为 myPackage
+版本号为 v1.0.0
+
+则编辑器里打包成功后，会生成如下数据文件(非资源文件)
+
+PackageManifest_myPackage_v1.0.0.version  (数据为版本号，比如 v1.0.0)
+
+PackageManifest_myPackage_v1.0.0.bytes  (资源清单文件,二进制存储)
+
+PackageManifest_myPackage_v1.0.0.hash  (当前清单文件的hash值，用于校验 xxx.bytes是否合法)
+
+PackageManifest_myPackage_v1.0.0.json (资源清单文件数据的json表示，调试用，无需放到下载服务器上)
+
+
+
+================= 联机更新流程
+
+1. 初始化
+var package = YooAssets.TryGetPackage(PACKAGE_NAME);   //根据包名尝试获取已存在的package对象
+if(package == null){   // package对象不存在，则创建
+	package = YooAssets.CreatePackage(PACKAGE_NAME);
+    YooAssets.SetDefaultPackage(package);   // 设置package为当前默认操作的对象
+}
+string defaultHostServer = "http://127.0.0.1/cdn";   //远程下载地址
+string fallbackHostServer = "http://127.0.0.1/cdn";  //远程下载备份地址(上面访问失败会尝试这个)
+var createParameters = new HostPlayModeParameters();
+//createParameters.DecryptionServices = new GameDecryptionServices();  //解密实现，如编辑器打包时未选择加密，则此处不解密
+createParameters.BuildinQueryServices = new GameQueryServices();   //检测bundle是否本地存在的接口(即某bundle是否已下载，避免重复下载)
+createParameters.DeliveryQueryServices = new DefaultDeliveryQueryServices();
+createParameters.RemoteServices = new RemoteServices(defaultHostServer, fallbackHostServer);  //远程下载时调用接口，获取下载地址
+initializationOperation = package.InitializeAsync(createParameters);   //初始化package
+
+
+2. 下载  xxx.version
+调用 package.UpdatePackageVersionAsync();
+失败则中断流程
+
+
+3. 更新manifest(涉及 xxx.hash, xxx.bytes)
+调用 package.UpdatePackageManifestAsync(PackageVersion, savePackageVersion);
+失败则中断流程
+详细步骤：
+  3-1
+  检测内存中是否已有匹配version的清单对象，如果存在则向上返回成功，否则执行3-2
+  3-2
+  检测本地是否有匹配version的清单文件，如成功则将其设置为激活清单(保存到内存)并向上返回成功，否则执行3-3
+    3-2-1
+    获取本地清单的hash值(读取 xxx.hash)，如文件不存在或内容为空则向上返回失败，否则执行3-2-2
+    3-2-2
+    检测本地清单的hash(读取 xxx.bytes并计算其hash)，如文件不存在或其hash与上一步获取的值不符，则向上返回错误，否则执行3-2-3
+    3-2-3
+    反序列化本地清单并检测其元数据(序列化 xxx.bytes)，检测元数据条目见 Runtime/PackageSystem/Operations/Internal/DeserializeManifestOperation.cs
+    本步成功则向上返回成功，否则向上返回错误
+  3-3
+  下载清单文件(xxx.hash 和 xxx.bytes)，如成功则重新执行3-2(成功则向上返回成功，否则向上返回失败)，否则向上返回失败
+  
+
+4. 开始下载
+调用
+var downloader = YooAssets.CreateResourceDownloader(downloadingMaxNum, failedTryAgain);
+downloader.TotalDownloadCount (需要下载文件总数,为0表示没有需要下载的文件，更新成功完成，进入后续流程)
+downloader.TotalDownloadBytes (需要下载文件总大小，严谨起见，此处应检测磁盘空间是否足够)
+详细步骤：
+  4-1
+  检测清单的bundleList，调用BuildinQueryServices对应的接口，确定该bundle是否加入下载列表(资源有变化时,bundle的hash值会变化，该hash值会作为bundle文件的名字).
+  4-2
+  根据上一步的下载列表开始下载
+  downloader.OnDownloadOverCallback = on_downloadOver;   下载结束时回调(不一定成功)
+  downloader.OnDownloadErrorCallback = on_downloadError;  下载发生错误时回调
+  downloader.OnDownloadProgressCallback = on_downloadProgress;  下载进度周期回调
+  downloader.BeginDownload();
+  yield return downloader;
+  if (downloader.Status == EOperationStatus.Succeed)
+  {
+    下载全部成功完成，更新成功完成，进入后续流程
+  }
+  else
+  {
+    下载发生错误，走更新失败流程
+    //Debug.Log("download ret: failed, error=" + downloader.Error);
+  }
+
+
+
+
+
+
+
+
