@@ -34,7 +34,16 @@ var createParameters = new HostPlayModeParameters();
 createParameters.BuildinQueryServices = new GameQueryServices();   //检测bundle是否本地存在的接口(即某bundle是否已下载，避免重复下载)
 createParameters.DeliveryQueryServices = new DefaultDeliveryQueryServices();
 createParameters.RemoteServices = new RemoteServices(defaultHostServer, fallbackHostServer);  //远程下载时调用接口，获取下载地址
-initializationOperation = package.InitializeAsync(createParameters);   //初始化package
+
+//初始化package
+initializationOperation = package.InitializeAsync(createParameters);   
+  1-1
+  检测是否覆盖安装(检测水印文件判断)，如覆盖安装后新启动则清理磁盘缓存的清单数据
+  1-2
+  加载磁盘上的version和manifest文件，如果磁盘上不存在则加载包内buildin的version和manifest，加载之后进行清单文件的反序列化(生成内存的manifest对象)
+  1-3
+  根据清单数据对本地已缓存的文件(热更数据存放的目录下)进行验证(CRC和文件尺寸等)，验证失败则删除文件，验证通过则把文件信息(包括文件hash数据)加载到CacheSystem
+
 
 
 2. 下载  xxx.version
@@ -85,6 +94,17 @@ downloader.TotalDownloadBytes (需要下载文件总大小，严谨起见，此�
     下载发生错误，走更新失败流程
     //Debug.Log("download ret: failed, error=" + downloader.Error);
   }
+
+
+5. 清理本地未使用的缓存文件
+调用
+var package = YooAssets.GetPackage(PACKAGE_NAME);
+var op = package.ClearUnusedCacheFilesAsync();  // 清理本地未使用的缓存文件
+op.Completed += on_clearUnusedCache;    //注册清理完成回调
+清理未使用的缓存文件，在第1步初始化时，热更前所有缓存文件hash已进入CacheSystem，
+这里会将CacheSystem缓存的所有文件hash依次与最新的manifest比较，如最新的manifest中不存在对应hash，
+则表示该文件不会被使用(已过期)，则删除之。
+
 
 
 
